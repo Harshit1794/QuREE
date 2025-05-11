@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Orientation with VR View</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+            max-width: 100%;
+            margin: 0 auto;
+            background-color: #f0f0f0;
+        }
+        #output {
+            font-size: 24px;
+            margin: 20px 0;
+        }
+        #status {
+            padding: 5px 10px;
+            border-radius: 5px;
+            display: inline-block;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .reconnecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #vr-container {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+        .vr-eye {
+            width: 50%;
+            box-sizing: border-box;
+            padding: 0 2px;
+        }
+        .vr-eye img {
+            width: 100%;
+            height: auto;
+            border: 1px solid #333;
+            border-radius: 5px;
+        }
+        #fullscreen-btn {
+            margin-top: 20px;
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #fullscreen-btn:hover {
+            background-color: #45a049;
+        }
+
+        @media screen and (orientation: landscape) {
+            body.vr-mode {
+                padding: 0;
+            }
+            body.vr-mode #output,
+            body.vr-mode #status,
+            body.vr-mode h1,
+            body.vr-mode #fullscreen-btn {
+                display: none;
+            }
+            body.vr-mode #vr-container {
+                height: 100vh;
+                margin: 0;
+            }
+            body.vr-mode .vr-eye img {
+                height: 100vh;
+                object-fit: cover;
+                border: none;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Phone Orientation with VR View</h1>
+    <div id="output">Yaw: 0°, Pitch: 0°</div>
+    <div id="status" class="disconnected">Disconnected</div>
+    
+    <div id="vr-container">
+        <div class="vr-eye left-eye">
+            <img id="left-stream" src="http://192.168.29.105:8080/stream/video.mjpeg" alt="Left eye stream">
+        </div>
+        <div class="vr-eye right-eye">
+            <img id="right-stream" src="http://192.168.29.105:8080/stream/video.mjpeg" alt="Right eye stream">
+        </div>
+    </div>
+    
+    <button id="fullscreen-btn">Enter VR Mode</button>
+    
+    <script>
+        let yaw = 0;
+        let pitch = 0;
+        let socket;
+        let isConnected = false;
+        let reconnectAttempts = 0;
+        
+        
+        const serverAddress = window.location.hostname;
+        const statusElement = document.getElementById('status');
+        
+        function connectWebSocket() {
+            socket = new WebSocket(`ws://${serverAddress}:8765`);
+            
+            socket.onopen = function(e) {
+                console.log("WebSocket connection established");
+                statusElement.textContent = "Connected";
+                statusElement.className = "connected";
+                isConnected = true;
+                reconnectAttempts = 0;
+            };
+            
+            socket.onclose = function(event) {
+                console.log("WebSocket connection closed");
+                statusElement.textContent = "Disconnected";
+                statusElement.className = "disconnected";
+                isConnected = false;
+                
+                setTimeout(reconnect, 2000);
+            };
+            
+            socket.onerror = function(error) {
+                console.error(`WebSocket error: ${error}`);
+            };
+        }
+        
+        function reconnect() {
+            if (isConnected) return;
+            
+            reconnectAttempts++;
+            if (reconnectAttempts > 10) {
+                statusElement.textContent = "Connection failed";
+                return;
+            }
+            
+            statusElement.textContent = "Reconnecting...";
+            statusElement.className = "reconnecting";
+            connectWebSocket();
+        }
+        
+        function sendOrientationData() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            
+            const data = {
+                yaw: yaw,
+                pitch: pitch
+            };
+            
+            socket.send(JSON.stringify(data));
+        }
+        
+        document.getElementById('fullscreen-btn').addEventListener('click', function() {
+            const docEl = document.documentElement;
+            
+            if (docEl.requestFullscreen) {
+                docEl.requestFullscreen();
+            } else if (docEl.webkitRequestFullscreen) {
+                docEl.webkitRequestFullscreen();
+            } else if (docEl.msRequestFullscreen) {
+                docEl.msRequestFullscreen();
+            }
+            
+            document.body.classList.add('vr-mode');
+        });
+        
+        document.addEventListener('fullscreenchange', function() {
+            if (!document.fullscreenElement) {
+                document.body.classList.remove('vr-mode');
+            }
+        });
+        
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', function(event) {
+                if (event.alpha !== null && event.beta !== null) {
+                    yaw = event.alpha.toFixed();  
+                    pitch = event.gamma.toFixed(); 
+                    
+                    document.getElementById('output').innerText = `Yaw: ${yaw}°, Pitch: ${pitch}°`;
+                    
+                    
+                    if (isConnected) {
+                        sendOrientationData();
+                    }
+                }
+            });
+            
+            
+            connectWebSocket();
+            
+        } else {
+            document.getElementById('output').innerText = "Device Orientation not supported";
+        }
+        
+        function checkVideoStreams() {
+            const leftStream = document.getElementById('left-stream');
+            const rightStream = document.getElementById('right-stream');
+            
+            function refreshStream(streamElement) {
+                const timestamp = new Date().getTime();
+                const baseUrl = "http://192.168.224.105:8080/stream/video.mjpeg";
+                streamElement.src = `${baseUrl}?t=${timestamp}`;
+            }
+            
+            
+            setInterval(() => {
+                refreshStream(leftStream);
+                refreshStream(rightStream);
+            }, 30000);
+            
+            
+            leftStream.onerror = function() {
+                console.log("Left stream error, attempting refresh");
+                refreshStream(leftStream);
+            };
+            
+            rightStream.onerror = function() {
+                console.log("Right stream error, attempting refresh");
+                refreshStream(rightStream);
+            };
+        }
+        
+        window.addEventListener('load', checkVideoStreams);
+    </script>
+</body>
+</html>
